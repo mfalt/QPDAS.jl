@@ -1,0 +1,6 @@
+authors = ["Mattias Fält <faldt.mattias@gmail.com>"]
+name = "QPDAS"
+uuid = "297e508c-b2a7-11e8-1524-5dccae6124f6"
+version = "0.0.1"
+
+[deps]
