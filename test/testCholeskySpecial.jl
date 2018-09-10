@@ -1,7 +1,7 @@
 using Random, Test
 Random.seed!(3141592)
 
-m, n = 30, 40
+m, n = 30, 100
 i = [6,10,25,9,8]
 # i = [6,8,9,10,25]
 # i = [25,10,9,8,6]
@@ -48,4 +48,5 @@ for j in randperm!(i)
 end
 
 @test cholesky(M)\b ≈ F.F\b
+@test cholesky(M)\b ≈ F\b
 @test cholesky(M).U ≈ F.U
