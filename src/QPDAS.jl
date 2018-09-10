@@ -1,5 +1,10 @@
 module QPDAS
 
+using LinearAlgebra
+
+# Special type that allowes for solving M\b with some rows/columns "deleted"
+include(choleskySpecial.jl)
+
 """ Q, q, m, n = dual(A,b,C,d)
 Given
 min_x 1/2||x-z||, s.t Ax=b, Cx≧d
