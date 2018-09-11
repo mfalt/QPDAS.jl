@@ -1,9 +1,11 @@
 module QPDAS
 
+export solveQP
+
 using LinearAlgebra
 
 # Special type that allowes for solving M\b with some rows/columns "deleted"
-include(choleskySpecial.jl)
+include("choleskySpecial.jl")
 
 """ Q, q, m, n = dual(A,b,C,d)
 Given
@@ -102,9 +104,9 @@ solve
 min_x ||x-z||, s.t Ax=b, Cx≧d
 """
 function solveQP(A,b,C,d,z)
-    Q,q,m,n = dual(A,b,C,d,z)
-    μλ = activeSetQP(Q,q, m, n)
-    return z0 - A'μλ[1:m] + C'μλ[(m+1):(m+n)]
+    Q, q, m, n = dual(A,b,C,d,z)
+    μλ = activeSetQP(Q, q, m, n)
+    return z - A'μλ[1:m] + C'μλ[(m+1):(m+n)]
 end
 
 end # module

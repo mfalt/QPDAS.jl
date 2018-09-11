@@ -31,13 +31,13 @@ struct CholeskySpecial{T,MT} <: Factorization{T}
     M::MT
 end
 
-function CholeskySpecial(F::Cholesky{T,MT}) where {T,MT}
+function CholeskySpecial(F::Cholesky{T,MT}, M = F.U'F.U) where {T,MT}
     if F.uplo != 'U'
         error("Only implemented for U type")
     end
     CholeskySpecial{T,MT}(F, Set{Int}(),                    # F and idx
         fill(zero(T), size(F,1)), fill(zero(T), size(F,1)), # tmp, tmp2
-        F.U'F.U)                                            # M
+        M)                                                  # M
 end
 
 """
