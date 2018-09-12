@@ -1,4 +1,7 @@
 using Random, Test
+
+import QPDAS: deleterowcol!, addrowcol!, CholeskySpecial
+
 Random.seed!(3141592)
 
 m, n = 30, 100

@@ -1,6 +1,16 @@
-authors = ["Mattias Fält <faldt.mattias@gmail.com>"]
 name = "QPDAS"
 uuid = "297e508c-b2a7-11e8-1524-5dccae6124f6"
+authors = ["Mattias Fält <faldt.mattias@gmail.com>"]
 version = "0.0.1"
 
 [deps]
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+
+[extras]
+OSQP = "ab2f91bb-94b4-55e3-9ba0-7f65df51de79"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["OSQP", "Test", "SparseArrays"]

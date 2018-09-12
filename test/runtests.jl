@@ -1,9 +1,9 @@
 using Test, Random, QPDAS
+using LinearAlgebra, SparseArrays
 
 include("testCholeskySpecial.jl")
 
 import OSQP
-using LinearAlgebra, SparseArrays
 
 Random.seed!(12345)
 
@@ -78,7 +78,7 @@ x2 = QPDAS.solve!(PP)
 @test A*x2 ≈ b atol=1e-12 # works up to 1e-14
 @test minimum(C*x2 - d) > -1e-12 # works up to 1e-14
 
-# 
+#
 # ## Compare gurobi
 #
 # env = Gurobi.Env()
