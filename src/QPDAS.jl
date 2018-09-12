@@ -28,18 +28,45 @@ struct PolytopeProjection{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
     μλ::VT
     λdual::VT
     sol::VT
+    tmp1::VT # size(G,1)
+    tmp2::VT # size(G,1)
+    tmp3::VT # length(z)
 end
 
 function PolytopeProjection(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A,2))) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
-    GQ = [A*A' -A*C';
-         -C*A' C*C']
-    c = [-A*z + b; C*z-d]
+    m = size(A,1)
+    n = size(C,1)
+    # Build matrix a bit more efficient
+    #GQ = [A*A' -A*C'; -C*A' C*C']
+    GQ = similar(A, m+n, m+n)
+    GQ11 = view(GQ, 1:m,1:m)
+    GQ12 = view(GQ, 1:m, (m+1):(m+n))
+    GQ22 = view(GQ, (m+1):(m+n), (m+1):(m+n))
+    mul!(GQ11,  A, A')
+    mul!(GQ12, A, C')
+    GQ12 .= .-GQ12
+    mul!(GQ22, C, C')
+    GQ[(m+1):(m+n), 1:m] .= GQ12'
+
+    # Build vector
+    # c = [-A*z + b; C*z-d]
+    c = similar(b, m+n)
+    c1 = view(c, 1:m)
+    c2 = view(c, (m+1):(m+n))
+    mul!(c1, A, z)
+    c1 .= b .- c1
+    mul!(c2, C, z)
+    c2 .= c2 .- d
+
     F = cholesky(GQ)
     G = CholeskySpecial(F, GQ)
     PolytopeProjection{T,VT,MT}(A,C,b,d,z,G,c,copy(F),
-        similar(z, length(b)+length(d)),
-        similar(z, length(d)),
-        similar(z))
+        similar(z, length(b)+length(d)),    # μλ
+        similar(z, length(d)),              # λdual
+        similar(z),                         # sol
+        similar(z, length(b)+length(d)),    # tmp1
+        similar(z, length(b)+length(d)),    # tmp2
+        similar(z))                         # tmp3
 end
 
 function solve!(PP::PolytopeProjection)
@@ -47,10 +74,10 @@ function solve!(PP::PolytopeProjection)
     m = size(PP.A,1)
     n = size(PP.C,1)
     mul!(PP.sol, PP.C', view(xk, (m+1):(m+n)))
-    tmp = similar(PP.sol)
-    mul!(tmp, PP.A', view(xk, 1:m))
+
+    mul!(PP.tmp3, PP.A', view(xk, 1:m))
     # sol = z - A'μλ[1:m] + C'μλ[(m+1):(m+n)]
-    PP.sol .= PP.z .- tmp .+ PP.sol
+    PP.sol .= PP.z .- PP.tmp3 .+ PP.sol
 end
 
 function update!(PP::PolytopeProjection; b=PP.b, d=PP.d, z=PP.z)
@@ -65,9 +92,9 @@ function update!(PP::PolytopeProjection; b=PP.b, d=PP.d, z=PP.z)
     mul!(c2, PP.C, z)
     c2 .= c2 .- d # c2 = C*z - b
 
+    PP.z .= z
     PP.b .= b
     PP.d .= d
-    # TODO reset something more in PP
     return
 end
 
@@ -80,13 +107,19 @@ function solveEqualityQP(PP::PolytopeProjection{T}, x::AbstractVector{T}) where 
     G = PP.G.M
     μλ = PP.μλ
     λ = PP.λdual
-    g = G*x + PP.c
-    μλ .= -g
-    ldiv!(PP.G, μλ)
+    g = PP.tmp1
+    tmp = PP.tmp2
+
+    mul!(g, G, x)    # g = G*x
+    g .+= PP.c      # g = Gx+c
+    μλ .= .-g
+    ldiv!(PP.G, μλ) # G*μλ = -g
     for i in PP.G.idx # set elements in working set to zero
         μλ[i] = zero(T)
     end
-    tmp = G*μλ + g
+
+    mul!(tmp, G, μλ)
+    tmp .+= g # tmp = G*μλ + g
     tmpidx = sort!([PP.G.idx...]) # Make sure λ is in predictable order
     for (i,j) in enumerate(tmpidx)
         λ[i] = tmp[j]
@@ -132,8 +165,12 @@ Active set method for QP as in Numerical Optimization, Nocedal Wright
 """
 function activeSetQP(PP::PolytopeProjection{T}) where T
     #xk = fill(zero(T), m+n) # Feasible point
+    # TODO better initial guess?
     xk = abs.(randn(size(PP.A,1) + size(PP.C,1)))
     Wk = PP.G.idx
+    for i in Wk
+        xk[i] = zero(T) # Make sure we start feasible with respect to initial guess
+    end
     done = false
     while !done
         #println("working set: ", Wk)
