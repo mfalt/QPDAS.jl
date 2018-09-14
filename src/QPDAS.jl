@@ -1,13 +1,13 @@
 module QPDAS
 
-export solveQP
+export QuadraticProgram, solve!, update!
 
-using LinearAlgebra
+using LinearAlgebra, SparseArrays
 
 # Special type that allowes for solving M\b with some rows/columns "deleted"
 include("choleskySpecial.jl")
 
-""" `pp = PolytopeProjection`
+""" `pp = QuadraticProgram`
     Type for problem
     min_x 1/2||x-z||, s.t Ax=b, Cx≧d
     Stores `A,b,C,d,z,G,c,sol,μλ` and some temporary variables
@@ -16,12 +16,14 @@ include("choleskySpecial.jl")
     and `c = [-A*z + b; C*z-d]`
     Dual varaibales are available as `qp.μλ`
 """
-struct PolytopeProjection{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
+struct QuadraticProgram{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}, PT, PFT}
     A::MT
     C::MT
     b::VT
     d::VT
     z::VT
+    P::PT
+    PF::PFT
     G::CholeskySpecial{T,MT}
     c::VT
     Fsave::Cholesky{T,MT}
@@ -33,34 +35,55 @@ struct PolytopeProjection{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
     tmp3::VT # length(z)
 end
 
-function PolytopeProjection(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A,2))) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
+function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A,2)), P=I) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
     m = size(A,1)
     n = size(C,1)
     # Build matrix a bit more efficient
     #GQ = [A*A' -A*C'; -C*A' C*C']
+    #GQ = [A*P⁻¹*A' -A*P⁻¹*C'; -C*P⁻¹*A' C*P⁻¹*C']
     GQ = similar(A, m+n, m+n)
     GQ11 = view(GQ, 1:m,1:m)
     GQ12 = view(GQ, 1:m, (m+1):(m+n))
     GQ22 = view(GQ, (m+1):(m+n), (m+1):(m+n))
-    mul!(GQ11,  A, A')
-    mul!(GQ12, A, C')
+    if P == I
+        PF = I
+    else
+        PF = factorize(P)
+    end
+    # TODO efficiency?
+    if P isa SparseMatrixCSC
+        # PF\A' wont work
+        PiAt = PF\Matrix(A')
+        PiCt = PF\Matrix(C')
+    else
+        PiAt = PF\A'
+        PiCt = PF\C'
+    end
+
+    mul!(GQ11,  A, PiAt)
+    mul!(GQ12, A, PiCt)
     GQ12 .= .-GQ12
-    mul!(GQ22, C, C')
+    mul!(GQ22, C, PiCt)
     GQ[(m+1):(m+n), 1:m] .= GQ12'
 
     # Build vector
     # c = [-A*z + b; C*z-d]
+    # c = [-A*P⁻¹*z + b; C*P⁻¹*z-d]
+    Piz = PF\z
     c = similar(b, m+n)
     c1 = view(c, 1:m)
     c2 = view(c, (m+1):(m+n))
-    mul!(c1, A, z)
+    mul!(c1, A, Piz)
     c1 .= b .- c1
-    mul!(c2, C, z)
+    mul!(c2, C, Piz)
     c2 .= c2 .- d
 
-    F = cholesky(GQ)
+    F = cholesky(Hermitian(GQ))
     G = CholeskySpecial(F, GQ)
-    PolytopeProjection{T,VT,MT}(A,C,b,d,z,G,c,copy(F),
+    QuadraticProgram{T,VT,MT, typeof(P), typeof(PF)}(
+        A,C,b,d,z,
+        P, PF,
+        G,c,copy(F),
         similar(z, length(b)+length(d)),    # μλ
         similar(z, length(d)),              # λdual
         similar(z),                         # sol
@@ -69,32 +92,38 @@ function PolytopeProjection(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size
         similar(z))                         # tmp3
 end
 
-function solve!(PP::PolytopeProjection)
-    xk = activeSetQP(PP) # Calculate dual variables
-    m = size(PP.A,1)
-    n = size(PP.C,1)
-    mul!(PP.sol, PP.C', view(xk, (m+1):(m+n)))
+function solve!(QP::QuadraticProgram)
+    xk = activeSetQP(QP) # Calculate dual variables
+    m = size(QP.A,1)
+    n = size(QP.C,1)
+    mul!(QP.sol, QP.C', view(xk, (m+1):(m+n)))
 
-    mul!(PP.tmp3, PP.A', view(xk, 1:m))
+    mul!(QP.tmp3, QP.A', view(xk, 1:m))
     # sol = z - A'μλ[1:m] + C'μλ[(m+1):(m+n)]
-    PP.sol .= PP.z .- PP.tmp3 .+ PP.sol
+    QP.sol .= QP.z .- QP.tmp3 .+ QP.sol
+    # TODO Efficiency
+    sol = QP.PF\QP.sol
+    QP.sol .= sol
 end
 
-function update!(PP::PolytopeProjection; b=PP.b, d=PP.d, z=PP.z)
+function update!(QP::QuadraticProgram; b=QP.b, d=QP.d, z=QP.z)
+    # TODO Up
     # We only need to update c
-    m = size(PP.A,1)
-    n = size(PP.C,1)
-    c1 = view(PP.c, 1:m)
-    c2 = view(PP.c, (m+1):(m+n))
+    m = size(QP.A,1)
+    n = size(QP.C,1)
+    c1 = view(QP.c, 1:m)
+    c2 = view(QP.c, (m+1):(m+n))
 
-    mul!(c1, PP.A, z)
+    # TODO efficiency
+    Piz = QP.PF\z
+    mul!(c1, QP.A, Piz)
     c1 .= b .- c1 # c1 = -A*z + b
-    mul!(c2, PP.C, z)
+    mul!(c2, QP.C, Piz)
     c2 .= c2 .- d # c2 = C*z - b
 
-    PP.z .= z
-    PP.b .= b
-    PP.d .= d
+    QP.z .= z
+    QP.b .= b
+    QP.d .= d
     return
 end
 
@@ -103,35 +132,35 @@ Solve min pᵀGp+gₖᵀp, s.t pᵢ=0, ∀ i ∈ Wᵢ
 where gₖ = Gx+c
 return optimal p and lagrange multipliers
 """
-function solveEqualityQP(PP::PolytopeProjection{T}, x::AbstractVector{T}) where T
-    G = PP.G.M
-    μλ = PP.μλ
-    λ = PP.λdual
-    g = PP.tmp1
-    tmp = PP.tmp2
+function solveEqualityQP(QP::QuadraticProgram{T}, x::AbstractVector{T}) where T
+    G = QP.G.M
+    μλ = QP.μλ
+    λ = QP.λdual
+    g = QP.tmp1
+    tmp = QP.tmp2
 
     mul!(g, G, x)    # g = G*x
-    g .+= PP.c      # g = Gx+c
+    g .+= QP.c      # g = Gx+c
     μλ .= .-g
-    ldiv!(PP.G, μλ) # G*μλ = -g
-    for i in PP.G.idx # set elements in working set to zero
+    ldiv!(QP.G, μλ) # G*μλ = -g
+    for i in QP.G.idx # set elements in working set to zero
         μλ[i] = zero(T)
     end
 
     mul!(tmp, G, μλ)
     tmp .+= g # tmp = G*μλ + g
-    tmpidx = sort!([PP.G.idx...]) # Make sure λ is in predictable order
+    tmpidx = sort!([QP.G.idx...]) # Make sure λ is in predictable order
     for (i,j) in enumerate(tmpidx)
         λ[i] = tmp[j]
     end
 
-    return μλ, view(λ, 1:length(PP.G.idx))
+    return μλ, view(λ, 1:length(QP.G.idx))
 end
 
 
-function findblocking(PP::PolytopeProjection{T}, xk, pk::AbstractVector{T}) where T
-    n = size(PP.C,1)           # Number of inequality constraints in original
-    Wk = PP.G.idx .- n         # Indices in λ
+function findblocking(QP::QuadraticProgram{T}, xk, pk::AbstractVector{T}) where T
+    n = size(QP.C,1)           # Number of inequality constraints in original
+    Wk = QP.G.idx .- n         # Indices in λ
     inotinW = setdiff(1:n, Wk) # The indices for λ not active
     μendi = length(xk)-n       # Where inequality starts in xk, pk
     minα = typemax(T)
@@ -149,13 +178,13 @@ function findblocking(PP::PolytopeProjection{T}, xk, pk::AbstractVector{T}) wher
     return minα, mini
 end
 
-function deleteactive!(PP::PolytopeProjection, i)
-    active = sort!([PP.G.idx...]) # Make sure λ is in predictable order
-    addrowcol!(PP.G, active[i])
+function deleteactive!(QP::QuadraticProgram, i)
+    active = sort!([QP.G.idx...]) # Make sure λ is in predictable order
+    addrowcol!(QP.G, active[i])
 end
 
-function addactive!(PP::PolytopeProjection, i)
-    deleterowcol!(PP.G, size(PP.A,1) + i) # Inequality constraints are at end of PP.G
+function addactive!(QP::QuadraticProgram, i)
+    deleterowcol!(QP.G, size(QP.A,1) + i) # Inequality constraints are at end of QP.G
 end
 
 """
@@ -163,18 +192,18 @@ Active set method for QP as in Numerical Optimization, Nocedal Wright
     min_y,λ   1/2[y;λ]ᵀG[y;λ] + cᵀ[y;λ], s.t λ≥0
     where y ∈ R^m, λ ∈ R^n
 """
-function activeSetQP(PP::PolytopeProjection{T}) where T
+function activeSetQP(QP::QuadraticProgram{T}) where T
     #xk = fill(zero(T), m+n) # Feasible point
     # TODO better initial guess?
-    xk = abs.(randn(size(PP.A,1) + size(PP.C,1)))
-    Wk = PP.G.idx
+    xk = abs.(randn(size(QP.A,1) + size(QP.C,1)))
+    Wk = QP.G.idx
     for i in Wk
         xk[i] = zero(T) # Make sure we start feasible with respect to initial guess
     end
     done = false
     while !done
         #println("working set: ", Wk)
-        pk, λi = solveEqualityQP(PP, xk)
+        pk, λi = solveEqualityQP(QP, xk)
         #println("xk: ", xk)
         #println("pk: ", pk)
         #println("λi: ", λi)
@@ -185,10 +214,10 @@ function activeSetQP(PP::PolytopeProjection{T}) where T
             else
                 # Remove active constraint from Wi
                 (v, idx) = findmin(λi)
-                deleteactive!(PP, idx)
+                deleteactive!(QP, idx)
             end
         else # p ≠ 0
-            minα, mini = findblocking(PP, xk, pk)
+            minα, mini = findblocking(QP, xk, pk)
             if minα < 0
                 error("minα less than 0, what to do?")
             end
@@ -196,7 +225,7 @@ function activeSetQP(PP::PolytopeProjection{T}) where T
             xk .= xk .+ α.*pk
             if minα ≤ 1
                 # mini is blocking constraint
-                addactive!(PP, mini)
+                addactive!(QP, mini)
             else
                 #No blocking constraint, continue
             end
