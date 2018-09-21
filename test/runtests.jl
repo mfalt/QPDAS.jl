@@ -187,3 +187,22 @@ x2 = solve!(QP)
 
 @test norm(x1-z) ≈ norm(x2-z) rtol=1e-11 # works up to 1e-12
 @test x1 ≈ x2 rtol=1e-10  # works up to 1e-11
+
+
+
+#
+#
+# me, mi, n = 20, 5, 100
+# # Equality
+# A = randn(me, n)
+# C = randn(mi, n)
+# D = randn(mi, n)
+# E = randn(mi, n)
+# M = [A;C;D;C;E]*[A;C;D;C;E]'
+# F = bunchkaufman(M, check=false)
+# F.info < 0 && error("info: $(F.info)")
+# F2 = F.U*pinv(Matrix(F.D))*F.U'
+# @test maximum(abs, F.U*F.D*F.U' - M) < 1e-10
+# Pinv = inv(F.U)*pinv(Matrix(F.D))*inv(F.U')
+# @test maximum(abs, Pinv*M*Pinv - Pinv) < 1e-14
+# @test maximum(abs, M*Pinv*M - M) < 1e-14

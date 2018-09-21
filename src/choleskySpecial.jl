@@ -61,7 +61,7 @@ end
 
 """ `deleterowcol!(F::CholeskySpecial{T}, i)`
     Given F=U*U', update factorization corresponding to setting
-    F[i, :] = 0, F[j, i] = 0
+    F[i, :] = 0, F[:, i] = 0
     F[i,i] = 1.
 """
 function deleterowcol!(F::CholeskySpecial{T,MT}, i) where {T,MT}

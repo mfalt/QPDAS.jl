@@ -6,6 +6,7 @@ using LinearAlgebra, SparseArrays
 
 # Special type that allowes for solving M\b with some rows/columns "deleted"
 include("choleskySpecial.jl")
+include("LDLTSpecial.jl")
 
 """ `pp = QuadraticProgram`
     Type for problem
@@ -45,20 +46,10 @@ function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A
     GQ11 = view(GQ, 1:m,1:m)
     GQ12 = view(GQ, 1:m, (m+1):(m+n))
     GQ22 = view(GQ, (m+1):(m+n), (m+1):(m+n))
-    if P == I
-        PF = I
-    else
-        PF = factorize(P)
-    end
-    # TODO efficiency?
-    if P isa SparseMatrixCSC
-        # PF\A' wont work
-        PiAt = PF\Matrix(A')
-        PiCt = PF\Matrix(C')
-    else
-        PiAt = PF\A'
-        PiCt = PF\C'
-    end
+
+    # Dispatch on type of P to get efficient solve of
+    # PF = factorize(P), PiAt = PF\A', PiCt = PF\C'
+    PF, PiAt, PiCt = factorizesolve(P,A,C)
 
     mul!(GQ11,  A, PiAt)
     mul!(GQ12, A, PiCt)
@@ -66,21 +57,10 @@ function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A
     mul!(GQ22, C, PiCt)
     GQ[(m+1):(m+n), 1:m] .= GQ12'
 
-    # Build vector
-    # c = [-A*z + b; C*z-d]
-    # c = [-A*P⁻¹*z + b; C*P⁻¹*z-d]
-    Piz = PF\z
-    c = similar(b, m+n)
-    c1 = view(c, 1:m)
-    c2 = view(c, (m+1):(m+n))
-    mul!(c1, A, Piz)
-    c1 .= b .- c1
-    mul!(c2, C, Piz)
-    c2 .= c2 .- d
-
     F = cholesky(Hermitian(GQ))
     G = CholeskySpecial(F, GQ)
-    QuadraticProgram{T,VT,MT, typeof(P), typeof(PF)}(
+    c = similar(b, m+n) # Set in update!
+    QP = QuadraticProgram{T,VT,MT, typeof(P), typeof(PF)}(
         A,C,b,d,z,
         P, PF,
         G,c,copy(F),
@@ -90,6 +70,42 @@ function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A
         similar(z, length(b)+length(d)),    # tmp1
         similar(z, length(b)+length(d)),    # tmp2
         similar(z))                         # tmp3
+
+    update!(QP)
+    return QP
+end
+
+# General safe implementation, Sparse LDLT doesn't support PF\A'
+function factorizesolve(P, A, C)
+    PF = factorize(P)
+    PiAt = PF\Matrix(A')
+    PiCt = PF\Matrix(C')
+    return PF, PiAt, PiCt
+end
+
+function factorizesolve(P::UniformScaling{Bool}, A, C)
+    if P.λ != true
+        error("P not positive definite")
+    end
+    return P, A', C'
+end
+
+function factorizesolve(P::UniformScaling, A, C)
+    # Send back Adjoint instread?
+    PF = P
+    PiAt = copy(A')
+    PiCt = copy(C')
+    PiAt ./= P.λ
+    PiCt ./= P.λ
+    return P, PiAt, PiCt
+end
+
+function factorizesolve(P::Matrix, A, C)
+    PF = factorize(P)
+    # Should work for dense case
+    PiAt = PF\A'
+    PiCt = PF\C'
+    return PF, PiAt, PiCt
 end
 
 function solve!(QP::QuadraticProgram)
