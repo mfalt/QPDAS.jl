@@ -13,6 +13,15 @@ FF = LDLTSpecial(F)
 
 deleterowcol!(FF, 3)
 
+addrowcol!(FF, 3)
+M2 = copy(M)
+M2[:,3] .= 0
+M2[3,:] .= 0
+M2[3,3] = 1
+F2 = ldlt(Symmetric(M2, :L))
+
+FF.F.L
+F2.L
 (FF.F.L*FF.F.D*FF.F.L')[invperm(FF.F.p), invperm(FF.F.p)] - M
 
 

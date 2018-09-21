@@ -36,7 +36,8 @@ struct LDLTSpecial{T,MT} <: Factorization{T}
     M::MT
 end
 
-function LDLTSpecial(F::LDLTFactorization{T}, M = F.L*F.D*F.L') where {T}
+# TODO dont use F.P ..
+function LDLTSpecial(F::LDLTFactorization{T}, M = F.P'F.L*F.D*F.L'F.P) where {T}
     if F.uplo != 'L'
         error("Only implemented for L type")
     end
@@ -87,7 +88,7 @@ function deleterowcol!(F::LDLTSpecial{T,MT}, j) where {T,MT}
     # Record that  this row/column is "removed"
     push!(F.idx, i)
     # Do rank update
-    update!(F.F, F.tmp, one(T))
+    update!(F.F, F.tmp, F.F.matrix[i,i])
     # Zero out
     for i in F.idx
         F.F.L[i, 1:(i-1)] .= zero(T)
@@ -121,10 +122,10 @@ function addrowcol!(F::LDLTSpecial{T,MT}, j) where {T,MT}
     end
     # Scalar result # TODO Efficient
     L21D11 = similar(b,i-1)
-    for j = 1:(j-1)
+    for j = 1:(i-1)
         L21D11[j] += S12[j]*F.M[j,j]
     end
-    S22 = F.M[i,i] - L21D1'S12
+    S22 = F.M[i,i] - L21D11'S12
     if abs(S22) == zero(T)
         # TODO New zero diagonal do zero L
     end
