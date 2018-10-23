@@ -1,19 +1,22 @@
-""" FS::CholeskySpecial{T,MT}
+""" FS::CholeskySpecialShifted{T,MT}
 
 Special Cholesky type to allow for "removal" of rows and columns from a Cholesky factorization.
+Factorizes the shifted (positive definite A+ϵI) and used iterative refinement to solve system.
 
-F0 = cholesky(A)
-F = CholeskySpecial(F0)
+`F0 = cholesky(A+ϵI)`
+`F = CholeskySpecialShifted(F0, A, ϵ)`
+or
+`F = CholeskySpecialShifted(A, shift=...)`
 
 Will destroy F0!
 
 "Removing" row and column generates the factorization corresponding to
 `A[:,i] = 0; A[i,:] = 0; A[i,i] = 1`
 
-`deleterowcol!(F::CholeskySpecial, i)`
+`deleterowcol!(F::CholeskySpecialShifted, i)`
     Delete row and column i
 
-`addrowcol!(F::CholeskySpecial, i)`
+`addrowcol!(F::CholeskySpecialShifted, i)`
     Reverse the deletion row and column i
 
 Supports `ldiv!`
@@ -23,35 +26,84 @@ Update of row k requires O(n^2) computations
 Solving is equivalent to a normal cholesky
 
 """
-struct CholeskySpecial{T,MT} <: AbstractCholeskySpecial{T,MT}
+struct CholeskySpecialShifted{T,MT} <: AbstractCholeskySpecial{T,MT}
     F::Cholesky{T,MT}
     idx::Set{Int}               # Indices of deleted rows and column
     tmp::Vector{T}              # tmp storage in deleterowcol
     tmp2::Vector{T}             # tmp storage in deleterowcol
     M::MT
+    shift::T
 end
 
-function CholeskySpecial(F::Cholesky{T,MT}, M = F.U'F.U) where {T,MT}
+# TODO We should try to make some deafult choise here
+function CholeskySpecialShifted(F::Cholesky{T,MT}, M, shift) where {T,MT}
     if F.uplo != 'U'
         error("Only implemented for U type")
     end
-    CholeskySpecial{T,MT}(F, Set{Int}(),                    # F and idx
+    CholeskySpecialShifted{T,MT}(F, Set{Int}(),                    # F and idx
         fill(zero(T), size(F,1)), fill(zero(T), size(F,1)), # tmp, tmp2
-        M)                                                  # M
+        M, shift)                                                  # M (unshifted), shift
+end
+
+function CholeskySpecialShifted(M::AbstractMatrix{T}, shift=sqrt(sqrt(eps(T))*eps(T))) where T
+    F = cholesky(M + I*shift)
+    return CholeskySpecialShifted(F, M, shift)
 end
 
 """
-cholsolveexclude!(F::CholeskySpecial, b)
+cholsolveexclude!(F::CholeskySpecialShifted, b)
 
 Solve Mx=b where F is Cholesky factorization if M with some rows and columns set to identity
 """
-LinearAlgebra.ldiv!(F::CholeskySpecial{T,MT}, b::AbstractVector{T}) where {T,MT} =
-    ldiv!(F.F, b)
+function LinearAlgebra.ldiv!(F::CholeskySpecialShifted{T,MT}, b::AbstractVector{T}; x0=zero(T)) where {T,MT}
+    rk = F.tmp
+    xk = F.tmp2
+    err = typemax(norm(zero(T)/one(T))) # Inf of right type
 
-Base.size(F::CholeskySpecial) = size(F.F)
-Base.size(F::CholeskySpecial, i::Int) = size(F.F)[i]
+    # Initial value
+    xk .= x0
 
-function Base.getproperty(F::CholeskySpecial{T,MT}, s::Symbol) where {T,MT}
+    for j in F.idx  # M should be M with some cols identity
+        xk[j] = b[j] # This might ruin projection?
+    end
+    # Iterative refinement
+    for i = 1:10
+        for j in F.idx  # let xk be zero where M shouldn't act
+            xk[j] = zero(T)
+        end
+        mul!(rk, F.M, xk)   # rk = M*xk
+        rk .= b .- rk       # rk = b - M*xk
+        for j in F.idx  # M should be M with some cols identity
+            rk[j] = zero(T) # zero error here, This might ruing projection?
+        end
+        err = norm(rk)
+        ldiv!(F.F, rk)      # rk = (M+ϵI)⁻¹(b - M*k)
+        for j in F.idx  # M should be M with some cols identity
+            rk[j] = zero(T) # zero error here, This might ruing projection?
+        end
+        xk .+= rk           # xk .= xk + (M+ϵI)⁻¹(b - M*k)
+        #println("err: $err")
+        if err < 1e-14 # Break if were happy
+            break
+        end
+    end
+    for j in F.idx  # M should be M with some cols identity
+        xk[j] = b[j] # This might ruin projection?
+    end
+    # Make sure that we found a solution
+    if err > 1e-10
+        @error "ldiv! did not converge to a solution, residual: $err"
+        error(SingularException)
+    else
+        b .= xk
+    end
+    return b
+end
+
+Base.size(F::CholeskySpecialShifted) = size(F.F)
+Base.size(F::CholeskySpecialShifted, i::Int) = size(F.F)[i]
+
+function Base.getproperty(F::CholeskySpecialShifted{T,MT}, s::Symbol) where {T,MT}
     if s == :U
         return F.F.U
     else
@@ -59,12 +111,12 @@ function Base.getproperty(F::CholeskySpecial{T,MT}, s::Symbol) where {T,MT}
     end
 end
 
-""" `deleterowcol!(F::CholeskySpecial{T}, i)`
+""" `deleterowcol!(F::CholeskySpecialShifted{T}, i)`
     Given F=U*U', update factorization corresponding to setting
     F[i, :] = 0, F[:, i] = 0
     F[i,i] = 1.
 """
-function deleterowcol!(F::CholeskySpecial{T,MT}, i) where {T,MT}
+function deleterowcol!(F::CholeskySpecialShifted{T,MT}, i) where {T,MT}
     if i in F.idx
         error("Can not delete row and column that is already deleted")
     end
@@ -88,13 +140,14 @@ end
 
 """  Reverse deleterowcol!
 """
-function addrowcol!(F::CholeskySpecial{T,MT}, i) where {T,MT}
+function addrowcol!(F::CholeskySpecialShifted{T,MT}, i) where {T,MT}
     if !(i in F.idx)
         error("Can not add row and column that has not been deleted")
     end
     n = size(F.F,1)
     b = F.tmp
     b .= F.M[:,i]
+    b[i] += F.shift # Add shift from [i,i]
     b[i:end] .= zero(T)
     for j in F.idx
         #This column should be zero in M
@@ -103,11 +156,11 @@ function addrowcol!(F::CholeskySpecial{T,MT}, i) where {T,MT}
     ldiv!(F.F.U', b) # b is now [S12; junk]
     S12 = view(b, 1:(i-1))
     # Scalar result
-    S22 = sqrt(F.M[i,i] - S12'S12)
+    S22 = sqrt((F.M[i,i] + F.shift) - S12'S12)
 
     # Get row from M (under assumption that some rows/cols are identity)
     M23 = view(F.tmp2, (i+1):n)
-    M23 .= F.M[i,(i+1):end]
+    M23 .= F.M[i,(i+1):end] # No shift here
     for j in F.idx
         if j > i
             #This column should be zero in M

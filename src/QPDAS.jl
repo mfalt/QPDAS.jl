@@ -1,11 +1,16 @@
 module QPDAS
 
+global const DEBUG = false
+
 export QuadraticProgram, solve!, update!
 
 using LinearAlgebra, SparseArrays
 
+abstract type AbstractCholeskySpecial{T,MT} <: Factorization{T} end
+
 # Special type that allowes for solving M\b with some rows/columns "deleted"
 include("choleskySpecial.jl")
+include("choleskySpecialShifted.jl")
 include("LDLTSpecial.jl")
 
 """ `pp = QuadraticProgram`
@@ -17,7 +22,7 @@ include("LDLTSpecial.jl")
     and `c = [-A*z + b; C*z-d]`
     Dual varaibales are available as `qp.μλ`
 """
-struct QuadraticProgram{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}, PT, PFT}
+struct QuadraticProgram{T, GT<:AbstractCholeskySpecial{T}, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}, PT, PFT}
     A::MT
     C::MT
     b::VT
@@ -25,7 +30,7 @@ struct QuadraticProgram{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}, PT, PFT
     z::VT
     P::PT
     PF::PFT
-    G::CholeskySpecial{T,MT}
+    G::GT
     c::VT
     Fsave::Cholesky{T,MT}
     μλ::VT
@@ -36,7 +41,7 @@ struct QuadraticProgram{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}, PT, PFT
     tmp3::VT # length(z)
 end
 
-function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A,2)), P=I) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
+function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A,2)), P=I; semidefinite=false, ϵ = sqrt(eps(T))) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
     m = size(A,1)
     n = size(C,1)
     # Build matrix a bit more efficient
@@ -57,10 +62,15 @@ function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A
     mul!(GQ22, C, PiCt)
     GQ[(m+1):(m+n), 1:m] .= GQ12'
 
-    F = cholesky(Hermitian(GQ))
-    G = CholeskySpecial(F, GQ)
+    G = if semidefinite
+            F = cholesky(Hermitian(GQ + I*ϵ))
+            CholeskySpecialShifted(F, GQ, ϵ)
+        else
+            F = cholesky(Hermitian(GQ))
+            CholeskySpecial(F, GQ)
+        end
     c = similar(b, m+n) # Set in update!
-    QP = QuadraticProgram{T,VT,MT, typeof(P), typeof(PF)}(
+    QP = QuadraticProgram{T,typeof(G),VT,MT, typeof(P), typeof(PF)}(
         A,C,b,d,z,
         P, PF,
         G,c,copy(F),
@@ -158,6 +168,7 @@ function solveEqualityQP(QP::QuadraticProgram{T}, x::AbstractVector{T}) where T
     mul!(g, G, x)    # g = G*x
     g .+= QP.c      # g = Gx+c
     μλ .= .-g
+    # This may throw on semidefinite, is caught in findDescent
     ldiv!(QP.G, μλ) # G*μλ = -g
     for i in QP.G.idx # set elements in working set to zero
         μλ[i] = zero(T)
@@ -169,6 +180,40 @@ function solveEqualityQP(QP::QuadraticProgram{T}, x::AbstractVector{T}) where T
     for (i,j) in enumerate(tmpidx)
         λ[i] = tmp[j]
     end
+
+    return μλ, view(λ, 1:length(QP.G.idx))
+end
+
+
+function findInfiniteDescent(QP::QuadraticProgram{T}, x) where T
+    G = QP.G.M
+    μλ = QP.μλ
+    λ = QP.λdual
+    g = QP.tmp1
+    tmp = QP.tmp2
+
+    mul!(g, G, x)    # g = G*x
+    g .+= QP.c      # g = Gx+c
+    μλ .= zero(T)   # We want to solve G*μλ = 0, with projection from -g
+    g .= .- g       # g = - g
+    ldiv!(QP.G, μλ, x0=g) # G*μλ = 0, projected from -g
+    for i in QP.G.idx # set elements in working set to zero
+        DEBUG && @assert abs(μλ[i]) < 1e-10
+        μλ[i] = zero(T)
+    end
+    DEBUG && println("g:", -g)
+    DEBUG && println("μλ:", μλ)
+    DEBUG && println("dot(μλ, g): $(dot(μλ, -g))")
+    @assert dot(μλ, -g) < 0 # Make sure we got descent direction (g = -g)
+    DEBUG && println("found descent")
+
+    # TODO figure out (not used λ)
+    # mul!(tmp, G, μλ)
+    # tmp .+= g # tmp = G*μλ + g
+    # tmpidx = sort!([QP.G.idx...]) # Make sure λ is in predictable order
+    # for (i,j) in enumerate(tmpidx)
+    #     λ[i] = tmp[j]
+    # end
 
     return μλ, view(λ, 1:length(QP.G.idx))
 end
@@ -203,6 +248,24 @@ function addactive!(QP::QuadraticProgram, i)
     deleterowcol!(QP.G, size(QP.A,1) + i) # Inequality constraints are at end of QP.G
 end
 
+
+function findDescent(QP, xk)
+    local pk, λi, infinitedescent
+    DEBUG && println("Finding descent")
+    try
+        # Expect solveEqualityQP to throw if min does not exist
+        pk, λi = solveEqualityQP(QP, xk)
+        DEBUG && println("Found descent")
+        infinitedescent = false
+    catch
+        # Find infinite descnet direction
+        pk, λi = findInfiniteDescent(QP, xk)
+        DEBUG && println("Found infinite descent")
+        infinitedescent = true
+    end
+
+    return pk, λi, infinitedescent
+end
 """
 Active set method for QP as in Numerical Optimization, Nocedal Wright
     min_y,λ   1/2[y;λ]ᵀG[y;λ] + cᵀ[y;λ], s.t λ≥0
@@ -218,12 +281,13 @@ function activeSetQP(QP::QuadraticProgram{T}) where T
     end
     done = false
     while !done
-        #println("working set: ", Wk)
-        pk, λi = solveEqualityQP(QP, xk)
-        #println("xk: ", xk)
-        #println("pk: ", pk)
+        DEBUG && println("working set: ", Wk)
+        pk, λi, infinitedescent = findDescent(QP, xk)
+        DEBUG && println("infinitedescent: $infinitedescent")
+        DEBUG && println("xk: ", xk)
+        DEBUG && println("pk: ", pk)
         #println("λi: ", λi)
-        if norm(pk) ≤ sqrt(eps(T))
+        if !infinitedescent && norm(pk) ≤ sqrt(eps(T))
             if all(v -> v ≥ 0, λi)
                 # Optimal solution
                 done = true
@@ -237,13 +301,22 @@ function activeSetQP(QP::QuadraticProgram{T}) where T
             if minα < 0
                 error("minα less than 0, what to do?")
             end
-            α = min(one(T), minα)
-            xk .= xk .+ α.*pk
-            if minα ≤ 1
-                # mini is blocking constraint
+            # If infinite descent, go all the way, otherwise max 1
+            if infinitedescent
+                if minα == typemax(T) || mini <= 0
+                    error("Dual seems to be unbounded")
+                end
+                xk .= xk .+ minα.*pk
                 addactive!(QP, mini)
             else
-                #No blocking constraint, continue
+                α = min(one(T), minα)
+                xk .= xk .+ α.*pk
+                if minα ≤ 1
+                    # mini is blocking constraint
+                    addactive!(QP, mini)
+                else
+                    #No blocking constraint, continue
+                end
             end
         end
     end

@@ -1,5 +1,4 @@
-using Random, Test
-
+using QPDAS, Random, Test, LinearAlgebra
 import QPDAS: deleterowcol!, addrowcol!, CholeskySpecial
 
 Random.seed!(3141592)
