@@ -37,7 +37,7 @@ struct LDLTSpecial{T,MT} <: Factorization{T}
 end
 
 # TODO dont use F.P ..
-function LDLTSpecial(F::LDLTFactorization{T}, M = F.P'F.L*F.D*F.L'F.P) where {T}
+function LDLTSpecial(F::LDLTFactorization{T}, M = F.L*F.D*F.L') where {T}
     if F.uplo != 'L'
         error("Only implemented for L type")
     end
@@ -76,7 +76,7 @@ end
     F[i, :] = 0, F[:, i] = 0
     F[i,i] = 1.
 """
-function deleterowcol!(F::LDLTSpecial{T,MT}, j) where {T,MT}
+function deleterowcol!(F::LDLTSpecial{T,MT}, j, old=false) where {T,MT}
     i = findfirst(isequal(j), F.F.p)::Int
     if i in F.idx
         error("Can not delete row and column that is already deleted")
@@ -88,7 +88,15 @@ function deleterowcol!(F::LDLTSpecial{T,MT}, j) where {T,MT}
     # Record that  this row/column is "removed"
     push!(F.idx, i)
     # Do rank update
-    update!(F.F, F.tmp, F.F.matrix[i,i])
+    if F.F.matrix[i,i] != 0 && abs(F.F.matrix[i,i]) > 100eps(T)
+        println("updating with F.tmp")
+        println(F.tmp)
+        if old
+            LDLT.update_old!(F.F, F.tmp, F.F.matrix[i,i])
+        else
+            update!(F.F, F.tmp, F.F.matrix[i,i])
+        end
+    end
     # Zero out
     for i in F.idx
         F.F.L[i, 1:(i-1)] .= zero(T)
@@ -101,7 +109,7 @@ end
 
 """  Reverse deleterowcol!
 """
-function addrowcol!(F::LDLTSpecial{T,MT}, j) where {T,MT}
+function addrowcol!(F::LDLTSpecial{T,MT}, j, old=false) where {T,MT}
     i = findfirst(isequal(j), F.F.p)::Int
     if !(i in F.idx)
         error("Can not add row and column that has not been deleted")
@@ -118,16 +126,24 @@ function addrowcol!(F::LDLTSpecial{T,MT}, j) where {T,MT}
     S12 = view(b, 1:(i-1))
     # TODO handle 0s in D11 here
     for j = 1:(i-1)
-        S12[j] /= F.M[j,j]
+        ## TODO HERE!!!!!!
+        di = F.F.matrix[j,j]
+        if di == zero(T)# || abs(di) < 100eps(T)
+            S12[j] = zero(T)
+        else
+            S12[j] /= di
+        end
     end
     # Scalar result # TODO Efficient
     L21D11 = similar(b,i-1)
     for j = 1:(i-1)
-        L21D11[j] += S12[j]*F.M[j,j]
+        L21D11[j] = S12[j]*F.F.matrix[j,j]
     end
     S22 = F.M[i,i] - L21D11'S12
     if abs(S22) == zero(T)
+        println(S22)
         # TODO New zero diagonal do zero L
+        @show S22
     end
 
     # Get row from M (under assumption that some rows/cols are identity)
@@ -146,11 +162,19 @@ function addrowcol!(F::LDLTSpecial{T,MT}, j) where {T,MT}
     # S23 = (M23 - F.L[(i+1):end,1:(i-1)]'S12)/S22 # Transposed
     S23 = view(F.F.L, (i+1):n, i) # This is where we write
     S13 = view(F.F.L, (i+1):n, 1:(i-1))
-    mul!(S23, S13', L21D11) # Now we have S22*S23 (D22*L32)
-    S23 .= (M23 .- S23)./S22
+    mul!(S23, S13, L21D11) # Now we have (L21*D22*L32^T)
+    if S22 != zero(T) && abs(S22) > 100eps(T)
+        S23 .= (M23 .- S23)./S22        # L32 Done
+    else
+        if norm(M23 - S23) != 0
+            @warn "Rhs is not zero when S22 zero, rhs: $(M23 - S23)"
+        end
+        S22 = zero(T)
+        S23 .= zero(T)
+    end
 
     # Set the diagonal
-    F.F.L[i,i] = S22
+    F.F.matrix[i,i] = S22
     # And the column
     F.F.L[i,1:(i-1)] .= S12
 
@@ -159,7 +183,20 @@ function addrowcol!(F::LDLTSpecial{T,MT}, j) where {T,MT}
     F.tmp[(i+1):n] .= S23
 
     #Update the triangular part S33
-    update!(F.F, F.tmp, -S22)
+    if any(isnan, F.tmp)
+        println("nan in v:")
+        println(F.tmp)
+        throw(SingularException)
+    end
+    if S22 != zero(T)
+        # update with non zero vector
+        if old
+            LDLT.update_old!(F.F, F.tmp, -S22)
+        else
+            update!(F.F, F.tmp, -S22)
+        end
+
+    end
 
     # Rememeber that i is added back
     pop!(F.idx, i)

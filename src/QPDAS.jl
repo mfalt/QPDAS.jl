@@ -8,6 +8,19 @@ using LinearAlgebra, SparseArrays
 
 abstract type AbstractCholeskySpecial{T,MT} <: Factorization{T} end
 
+mutable struct QPStatus
+    iters::Int
+end
+
+QPStatus() = QPStatus(-1)
+
+function reset!(qps::QPStatus)
+    qps.iters = 0
+end
+function next!(qps::QPStatus)
+    qps.iters += 1
+end
+
 # Special type that allowes for solving M\b with some rows/columns "deleted"
 include("choleskySpecial.jl")
 include("choleskySpecialShifted.jl")
@@ -39,6 +52,7 @@ struct QuadraticProgram{T, GT<:AbstractCholeskySpecial{T}, VT<:AbstractVector{T}
     tmp1::VT # size(G,1)
     tmp2::VT # size(G,1)
     tmp3::VT # length(z)
+    status::QPStatus
 end
 
 function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A,2)), P=I; semidefinite=false, ϵ = sqrt(eps(T))) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
@@ -79,7 +93,8 @@ function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A
         similar(z),                         # sol
         similar(z, length(b)+length(d)),    # tmp1
         similar(z, length(b)+length(d)),    # tmp2
-        similar(z))                         # tmp3
+        similar(z),                         # tmp3
+        QPStatus())
 
     update!(QP)
     return QP
@@ -119,6 +134,7 @@ function factorizesolve(P::Matrix, A, C)
 end
 
 function solve!(QP::QuadraticProgram)
+    reset!(QP.status)
     xk = activeSetQP(QP) # Calculate dual variables
     m = size(QP.A,1)
     n = size(QP.C,1)
@@ -281,6 +297,7 @@ function activeSetQP(QP::QuadraticProgram{T}) where T
     end
     done = false
     while !done
+        next!(QP.status) # Update iteration count and similar
         DEBUG && println("working set: ", Wk)
         pk, λi, infinitedescent = findDescent(QP, xk)
         DEBUG && println("infinitedescent: $infinitedescent")
@@ -299,7 +316,7 @@ function activeSetQP(QP::QuadraticProgram{T}) where T
         else # p ≠ 0
             minα, mini = findblocking(QP, xk, pk)
             if minα < 0
-                error("minα less than 0, what to do?")
+                error("Unexpected error: minα less than 0")
             end
             # If infinite descent, go all the way, otherwise max 1
             if infinitedescent

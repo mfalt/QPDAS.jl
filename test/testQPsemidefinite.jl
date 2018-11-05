@@ -29,11 +29,11 @@ OSQP.setup!(model; P=SparseMatrixCSC{Float64}(I, n, n), l=l, A=sparse(M), u=u, v
     eps_prim_inf=eps(), eps_dual_inf=eps())
 
 OSQP.update!(model; q=-z)
-results = OSQP.solve!(model)
+@time results = OSQP.solve!(model)
 x1 = results.x
 
 QP = QuadraticProgram(A,b,C,d,z,semidefinite=true)
-x2 = solve!(QP)
+@time x2 = solve!(QP)
 #x2 = solveQP(A,b,C,d,z)
 
 @test A*x2 ≈ b atol=1e-12 # works up to 1e-14
