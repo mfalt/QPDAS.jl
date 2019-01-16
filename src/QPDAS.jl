@@ -28,11 +28,11 @@ include("LDLTSpecial.jl")
 
 """ `pp = QuadraticProgram`
     Type for problem
-    min_x 1/2xᵀPx - zᵀx, s.t Ax=b, Cx≧d
+    min_x 1/2xᵀPx + zᵀx, s.t Ax=b, Cx≤d
     Stores `A,b,C,d,z,G,c,sol,μλ` and some temporary variables
     Where `sol` is the solution after calling `solve!(qp)`
-    G is factorization of `[A*A' -A*C'; -C*A' C*C']`
-    and `c = [-A*z + b; C*z-d]`
+    G is factorization of `[A*A' A*C'; C*A' C*C']`
+    and `c = [A*z + b; C*z+d]`
     Dual varaibales are available as `qp.μλ`
 """
 struct QuadraticProgram{T, GT<:AbstractCholeskySpecial{T}, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}, PT, PFT}
@@ -59,8 +59,8 @@ function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A
     m = size(A,1)
     n = size(C,1)
     # Build matrix a bit more efficient
-    #GQ = [A*A' -A*C'; -C*A' C*C']
-    #GQ = [A*P⁻¹*A' -A*P⁻¹*C'; -C*P⁻¹*A' C*P⁻¹*C']
+    #GQ = [A*A' A*C'; C*A' C*C']
+    #GQ = [A*P⁻¹*A' A*P⁻¹*C'; C*P⁻¹*A' C*P⁻¹*C']
     GQ = similar(A, m+n, m+n)
     GQ11 = view(GQ, 1:m,1:m)
     GQ12 = view(GQ, 1:m, (m+1):(m+n))
@@ -72,7 +72,7 @@ function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A
 
     mul!(GQ11,  A, PiAt)
     mul!(GQ12, A, PiCt)
-    GQ12 .= .-GQ12
+
     mul!(GQ22, C, PiCt)
     GQ[(m+1):(m+n), 1:m] .= GQ12'
 
@@ -141,8 +141,8 @@ function solve!(QP::QuadraticProgram)
     mul!(QP.sol, QP.C', view(xk, (m+1):(m+n)))
 
     mul!(QP.tmp3, QP.A', view(xk, 1:m))
-    # sol = z - A'μλ[1:m] + C'μλ[(m+1):(m+n)]
-    QP.sol .= QP.z .- QP.tmp3 .+ QP.sol
+    # sol = -P\(z + A'μλ[1:m] + C'μλ[(m+1):(m+n)])
+    QP.sol .= .- QP.z .- QP.tmp3 .- QP.sol
     # TODO Efficiency
     sol = QP.PF\QP.sol
     QP.sol .= sol
@@ -150,7 +150,7 @@ function solve!(QP::QuadraticProgram)
     #1/2xᵀPx - zᵀx
     # TODO Efficiency
     tmp = QP.P*sol
-    return sol, dot(tmp,sol)/2 - dot(sol, QP.z)
+    return sol, dot(tmp,sol)/2 + dot(sol, QP.z)
 end
 
 function update!(QP::QuadraticProgram; b=QP.b, d=QP.d, z=QP.z)
@@ -164,9 +164,9 @@ function update!(QP::QuadraticProgram; b=QP.b, d=QP.d, z=QP.z)
     # TODO efficiency
     Piz = QP.PF\z
     mul!(c1, QP.A, Piz)
-    c1 .= b .- c1 # c1 = -A*z + b
+    c1 .= c1 .+ b # c1 = A*z + b
     mul!(c2, QP.C, Piz)
-    c2 .= c2 .- d # c2 = C*z - b
+    c2 .= c2 .+ d # c2 = C*z + b
 
     QP.z .= z
     QP.b .= b
