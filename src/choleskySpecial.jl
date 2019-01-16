@@ -41,7 +41,7 @@ function CholeskySpecial(F::Cholesky{T,MT}, M = F.U'F.U) where {T,MT}
 end
 
 """
-cholsolveexclude!(F::CholeskySpecial, b)
+ldiv!(F::CholeskySpecial, b)
 
 Solve Mx=b where F is Cholesky factorization if M with some rows and columns set to identity
 """

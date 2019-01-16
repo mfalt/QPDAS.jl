@@ -2,7 +2,7 @@ module QPDAS
 
 global const DEBUG = false
 
-export QuadraticProgram, solve!, update!
+export QuadraticProgram, solve!, update!, ldiv2!
 
 using LinearAlgebra, SparseArrays
 
@@ -28,7 +28,7 @@ include("LDLTSpecial.jl")
 
 """ `pp = QuadraticProgram`
     Type for problem
-    min_x 1/2||x-z||, s.t Ax=b, Cx≧d
+    min_x 1/2xᵀPx - zᵀx, s.t Ax=b, Cx≧d
     Stores `A,b,C,d,z,G,c,sol,μλ` and some temporary variables
     Where `sol` is the solution after calling `solve!(qp)`
     G is factorization of `[A*A' -A*C'; -C*A' C*C']`
@@ -55,7 +55,7 @@ struct QuadraticProgram{T, GT<:AbstractCholeskySpecial{T}, VT<:AbstractVector{T}
     status::QPStatus
 end
 
-function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A,2)), P=I; semidefinite=false, ϵ = sqrt(eps(T))) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
+function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A,2)), P=I; semidefinite=true, ϵ = sqrt(eps(T))) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
     m = size(A,1)
     n = size(C,1)
     # Build matrix a bit more efficient
@@ -146,6 +146,11 @@ function solve!(QP::QuadraticProgram)
     # TODO Efficiency
     sol = QP.PF\QP.sol
     QP.sol .= sol
+
+    #1/2xᵀPx - zᵀx
+    # TODO Efficiency
+    tmp = QP.P*sol
+    return sol, dot(tmp,sol)/2 - dot(sol, QP.z)
 end
 
 function update!(QP::QuadraticProgram; b=QP.b, d=QP.d, z=QP.z)
@@ -198,6 +203,47 @@ function solveEqualityQP(QP::QuadraticProgram{T}, x::AbstractVector{T}) where T
     end
 
     return μλ, view(λ, 1:length(QP.G.idx))
+end
+
+
+"""
+Solve min pᵀGp+gₖᵀp, s.t pᵢ=0, ∀ i ∈ Wᵢ
+where gₖ = Gx+c
+return optimal p and lagrange multipliers
+"""
+function solveEqualityOrInfiniteDescentQP(QP::QuadraticProgram{T}, x::AbstractVector{T}) where T
+    G = QP.G.M
+    μλ = QP.μλ
+    λ = QP.λdual
+    g = QP.tmp1
+    tmp = QP.tmp2
+
+    mul!(g, G, x)    # g = G*x
+    g .+= QP.c      # g = Gx+c
+    μλ .= .-g
+
+    _, projection = ldiv2!(QP.G, μλ) # G*μλ = -g, or projection i.e. infinite descent
+    for i in QP.G.idx # set elements in working set to zero
+        DEBUG && projection && @assert abs(μλ[i]) < 1e-10
+        μλ[i] = zero(T)
+    end
+
+    if !projection # Fix lambda
+        mul!(tmp, G, μλ)
+        tmp .+= g # tmp = G*μλ + g
+        tmpidx = sort!([QP.G.idx...]) # Make sure λ is in predictable order
+        for (i,j) in enumerate(tmpidx)
+            λ[i] = tmp[j]
+        end
+    else
+        DEBUG && println("g:", -g)
+        DEBUG && println("μλ:", μλ)
+        DEBUG && println("dot(μλ, g): $(dot(μλ, -g))")
+        @assert dot(μλ, -g) < 0 # Make sure we got descent direction (g = -g)
+        DEBUG && println("found descent")
+    end
+
+    return μλ, view(λ, 1:length(QP.G.idx)), projection
 end
 
 
@@ -264,7 +310,6 @@ function addactive!(QP::QuadraticProgram, i)
     deleterowcol!(QP.G, size(QP.A,1) + i) # Inequality constraints are at end of QP.G
 end
 
-
 function findDescent(QP, xk)
     local pk, λi, infinitedescent
     DEBUG && println("Finding descent")
@@ -279,6 +324,27 @@ function findDescent(QP, xk)
         DEBUG && println("Found infinite descent")
         infinitedescent = true
     end
+
+    return pk, λi, infinitedescent
+end
+
+function findDescent(QP::QuadraticProgram{T,GT}, xk) where {T, GT<:CholeskySpecialShifted}
+    pk, λi, infinitedescent = solveEqualityOrInfiniteDescentQP(QP, xk)
+    DEBUG && println("Finding descent")
+    DEBUG && !infinitedescent && println("Found descent")
+    DEBUG &&  infinitedescent && println("Found infinite descent")
+    # DEBUG && println("Finding descent")
+    # try
+    #     # Expect solveEqualityQP to throw if min does not exist
+    #     pk, λi = solveEqualityQP(QP, xk)
+    #     DEBUG && println("Found descent")
+    #     infinitedescent = false
+    # catch
+    #     # Find infinite descnet direction
+    #     pk, λi = findInfiniteDescent(QP, xk)
+    #     DEBUG && println("Found infinite descent")
+    #     infinitedescent = true
+    # end
 
     return pk, λi, infinitedescent
 end

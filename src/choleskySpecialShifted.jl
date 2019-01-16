@@ -31,6 +31,9 @@ struct CholeskySpecialShifted{T,MT} <: AbstractCholeskySpecial{T,MT}
     idx::Set{Int}               # Indices of deleted rows and column
     tmp::Vector{T}              # tmp storage in deleterowcol
     tmp2::Vector{T}             # tmp storage in deleterowcol
+    tmp3::Vector{T}             # tmp storage in ldiv2!
+    tmp4::Vector{T}             # tmp storage in ldiv2!
+    tmp5::Vector{T}             # tmp storage in ldiv2!
     M::MT
     shift::T
 end
@@ -40,9 +43,11 @@ function CholeskySpecialShifted(F::Cholesky{T,MT}, M, shift) where {T,MT}
     if F.uplo != 'U'
         error("Only implemented for U type")
     end
-    CholeskySpecialShifted{T,MT}(F, Set{Int}(),                    # F and idx
-        fill(zero(T), size(F,1)), fill(zero(T), size(F,1)), # tmp, tmp2
-        M, shift)                                                  # M (unshifted), shift
+    n = size(F,1)
+    CholeskySpecialShifted{T,MT}(F, Set{Int}(),                 # F and idx
+        fill(zero(T), n), fill(zero(T), n), fill(zero(T), n),   # tmp, tmp2, tmp3
+        fill(zero(T), n), fill(zero(T), n),                     # tmp4, tmp5
+        M, shift)                                               # M (unshifted), shift
 end
 
 function CholeskySpecialShifted(M::AbstractMatrix{T}, shift=sqrt(sqrt(eps(T))*eps(T))) where T
@@ -50,24 +55,59 @@ function CholeskySpecialShifted(M::AbstractMatrix{T}, shift=sqrt(sqrt(eps(T))*ep
     return CholeskySpecialShifted(F, M, shift)
 end
 
-"""
-cholsolveexclude!(F::CholeskySpecialShifted, b)
+# Helper function norm(a-b)
+function normdiff(a,b)
+    n = length(a)
+    @assert n == length(b)
+    s = zero(eltype(a))
+    @inbounds @simd for i in eachindex(a)
+        s += (a[i]-b[i])^2
+    end
+    return sqrt(s)
+end
 
-Solve Mx=b where F is Cholesky factorization if M with some rows and columns set to identity
 """
-function LinearAlgebra.ldiv!(F::CholeskySpecialShifted{T,MT}, b::AbstractVector{T}; x0=zero(T)) where {T,MT}
+b, projection = ldiv2!(F::CholeskySpecialShifted{T,MT}, b::AbstractVector{T}; x0=zero(T))
+
+Solve `Mx=b` where F is Cholesky factorization if M with some rows and columns set to identity
+
+The solution `x` is the projection onto `Mx=b` from `x0`.
+`x0` can be a Vector or Number (treated as `fill(x0,n)`).
+
+If no solution exists, finds projection of `b` onto space `Mx=0`.
+
+`projection=false` if soulution `Mx=b` found, and
+`projection=true` if not.
+
+Overwrites and returns `b`.
+
+"""
+function ldiv2!(F::CholeskySpecialShifted{T,MT}, b::AbstractVector{T}; x0=zero(T), data=nothing) where {T,MT}
+    done = false
+    nleft = 2 # Number of iterations to run when done
+    projection = false
     rk = F.tmp
     xk = F.tmp2
-    err = typemax(norm(zero(T)/one(T))) # Inf of right type
+    rkold = F.tmp3
+    xkold = F.tmp4
+    xkoldold = F.tmp5
+
+    rnorm = typemax(norm(zero(T)/one(T))) # Inf of right type
+    xnorm = rnorm   # norm(x_k)
+    drnorm = rnorm  # norm(r_k - r_(k-1))
+    dxnorm = rnorm  # norm(x_k - x_(k-1))
+    ddxnorm = rnorm # norm(x_k -2x_(k+1) + x_(k-2))
 
     # Initial value
     xk .= x0
+    # Set rk (xkdiffold) to Inf
+    rk .= rnorm
 
     for j in F.idx  # M should be M with some cols identity
         xk[j] = b[j] # This might ruin projection?
     end
     # Iterative refinement
-    for i = 1:10
+    for i = 1:100
         for j in F.idx  # let xk be zero where M shouldn't act
             xk[j] = zero(T)
         end
@@ -76,26 +116,104 @@ function LinearAlgebra.ldiv!(F::CholeskySpecialShifted{T,MT}, b::AbstractVector{
         for j in F.idx  # M should be M with some cols identity
             rk[j] = zero(T) # zero error here, This might ruing projection?
         end
-        err = norm(rk)
-        ldiv!(F.F, rk)      # rk = (M+ϵI)⁻¹(b - M*k)
+        rnorm = norm(rk)
+        drnorm = normdiff(rk, rkold)
+        # Now save rk
+        rkold .= rk
+        #push!(data.rk, copy(rk))
+        ldiv!(F.F, rk)      # rk = (M+ϵI)⁻¹(b - M*xk)
         for j in F.idx  # M should be M with some cols identity
             rk[j] = zero(T) # zero error here, This might ruing projection?
         end
-        xk .+= rk           # xk .= xk + (M+ϵI)⁻¹(b - M*k)
-        #println("err: $err")
-        if err < 1e-14 # Break if were happy
-            break
+        xk .+= rk           # xk .= xk + (M+ϵI)⁻¹(b - M*xk)
+
+        #push!(data.xk, copy(xk))
+
+        xnorm = norm(xk)
+        dxnorm = norm(rk)
+        # We can now use xkoldold as temp storage for ddx
+        xkoldold .= rk .- xkold .+ xkoldold # ddx
+        #rk .= rk .- xkold .+ xkoldold # ddx
+        ddxnorm = norm(xkoldold)
+        # Now save xk
+        xkoldold .= xkold
+        xkold .= xk
+
+        # println("rnorm: $rnorm")
+        # println("xnorm: $xnorm")
+        # println("drnorm: $drnorm")
+        # println("dxnorm: $(dxnorm)")
+        # println("ddxnorm: $(ddxnorm)")
+        # println("dxnorm/xnorm: $(dxnorm/xnorm)")
+        # println("ddxnorm/xnorm: $(ddxnorm/xnorm)")
+
+        # This should re robust
+        if rnorm < 1e-11 && drnorm < 1e-11 # Break if we found Mx=b solution
+            done = true
+            projection = false
+            if nleft < 1
+                DEBUG && println("$projection i: $i")
+                break
+            end
+            nleft -= 1
+        end
+        # Maybe not as robust, so only use one case
+        if ddxnorm/xnorm < 1e-7
+            if dxnorm/xnorm < 1e-2 # Let the robust case catch this
+                # done = true
+                # projection = false
+                # break
+            else
+                done = true
+                projection = true
+                if nleft < 1
+                    DEBUG && println("$projection i: $i")
+                    break
+                end
+                nleft -= 1
+            end
         end
     end
     for j in F.idx  # M should be M with some cols identity
         xk[j] = b[j] # This might ruin projection?
     end
-    # Make sure that we found a solution
-    if err > 1e-10
-        @error "ldiv! did not converge to a solution, residual: $err"
-        error(SingularException)
+    if !done # Allow larger erros
+        if rnorm < 1e-10 # Assume solution
+            if dxnorm > 1e-10 # We don't want this
+                error("ldiv! did not converge to a solution, case 1, rnorm: $rnorm, dxnorm: $(dxnorm)")
+            end
+            projection = false
+            DEBUG && println("$projection after")
+        elseif ddxnorm/xnorm < 1e-6 && dxnorm/xnorm > 1e-3
+            projection = true
+            DEBUG && println("$projection after")
+        else
+            error("ldiv! did not converge to a solution, case 2, rnorm: $rnorm, dxnorm: $(dxnorm), ddxnorm/xnorm: $(ddxnorm/xnorm)")
+        end
+    end
+    #println("$projection end")
+    if projection
+        b .= rk.*F.shift
     else
         b .= xk
+    end
+
+    return b, projection
+end
+
+
+"""
+
+ldiv!(F::CholeskySpecialShifted{T,MT}, b::AbstractVector{T}; x0=zero(T))
+
+Solve Mx=b where F is Cholesky factorization if M with some rows and columns set to identity
+
+"""
+function LinearAlgebra.ldiv!(F::CholeskySpecialShifted{T,MT}, b::AbstractVector{T}; x0=zero(T)) where {T,MT}
+    _, projection = ldiv2!(F, b, x0=x0)
+    if projection
+        @error "ldiv! did not converge to a solution"
+        error(SingularException)
     end
     return b
 end
