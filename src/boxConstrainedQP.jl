@@ -40,6 +40,7 @@ function BoxConstrainedQP(G::AbstractMatrix{T}, c::VT, d::VT; semidefinite=true,
     n = size(G,1) - m
 
     @assert issymmetric(G)
+    @assert all(isequal(0), d) # For now we only allow positive constraints
 
     GF = if semidefinite
             F = cholesky(Hermitian(G + I*ϵ))
@@ -168,7 +169,7 @@ end
 
 function findblocking(bQP::BoxConstrainedQP{T}, xk, pk::AbstractVector{T}) where T
     m = bQP.m    # Number of inequality constraints
-    Wk = bQP.G.idx .- (size(bQP.G,1)-m)        # Indices in λ
+    Wk = bQP.G.idx .- m        # Indices in λ
     inotinW = setdiff(1:m, Wk) # The indices for λ not active
     μendi = length(xk)-m       # Where inequality starts in xk, pk
     minα = typemax(T)
@@ -192,7 +193,7 @@ function deleteactive!(bQP::BoxConstrainedQP, i)
 end
 
 function addactive!(bQP::BoxConstrainedQP, i)
-    deleterowcol!(bQP.G, bQP.m + i) # Inequality constraints are at end of QP.G
+    deleterowcol!(bQP.G, (size(bQP.G,1) - bQP.m)  + i) # Inequality constraints are at end of QP.G
 end
 
 function findDescent(bQP, xk)
@@ -266,12 +267,13 @@ function solve!(bQP::BoxConstrainedQP{T}) where T
             end
         else # p ≠ 0
             minα, mini = findblocking(bQP, xk, pk)
+            DEBUG && println("mini: $mini")
             if minα < 0
                 error("Unexpected error: minα less than 0")
             end
             # If infinite descent, go all the way, otherwise max 1
             if infinitedescent
-                println("takning infinite descent direction, α=$minα")
+                DEBUG && println("takning infinite descent direction, α=$minα")
                 if minα == typemax(T) || mini <= 0
                     error("Dual seems to be unbounded")
                 end
