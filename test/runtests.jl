@@ -13,6 +13,10 @@ end
     include("testCholeskySpecialShiftedProjection.jl")
 end
 
+@testset "testBoxQP" begin
+    include("testBoxQP.jl")
+end
+
 @testset "testQP" begin
     include("testQP.jl")
 end
