@@ -177,18 +177,20 @@ function ldiv2!(F::CholeskySpecialShifted{T,MT}, b::AbstractVector{T}; x0=zero(T
     for j in F.idx  # M should be M with some cols identity
         xk[j] = b[j] # This might ruin projection?
     end
+
     if !done # Allow larger erros
+        DEBUG && println("No convergence")
         if rnorm < 1e-10 # Assume solution
             if dxnorm > 1e-10 # We don't want this
                 error("ldiv! did not converge to a solution, case 1, rnorm: $rnorm, dxnorm: $(dxnorm)")
             end
             projection = false
             DEBUG && println("$projection after")
-        elseif ddxnorm/xnorm < 1e-6 && dxnorm/xnorm > 1e-3
+        elseif ddxnorm/xnorm < 1e-5 && dxnorm/xnorm > 1e-3
             projection = true
             DEBUG && println("$projection after")
         else
-            error("ldiv! did not converge to a solution, case 2, rnorm: $rnorm, dxnorm: $(dxnorm), ddxnorm/xnorm: $(ddxnorm/xnorm)")
+            error("ldiv! did not converge to a solution, case 2, rnorm: $rnorm, dxnorm: $(dxnorm), dxnorm/xnorm: $(dxnorm/xnorm), ddxnorm/xnorm: $(ddxnorm/xnorm)")
         end
     end
     #println("$projection end")
