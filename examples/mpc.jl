@@ -28,7 +28,7 @@ function complact_form(A::AbstractArray{T}, B, Q, R, n) where T
     H = N'Qn*N
     return F, G, H, M, N
 end
-T = BigFloat
+T = Float64
 A = T.([0.999  -3.008  -0.113  -1.608  ;
      0      0.986   0.048   0       ;
      0      2.083   1.009   0       ;
@@ -39,7 +39,7 @@ B = T.([-0.080 -0.635  ;
      -0.022 -0.002  ])
 Q = Matrix{T}(I,4,4)
 R = Matrix{T}(I,2,2)
-n = 20
+n = 10
 F, G, H, M, N = complact_form(A,B,Q,R,n)
 
 x0 = 0.2.*ones(4)
@@ -60,13 +60,14 @@ UC = M
 using QPDAS
 nU = nu*n
 z = G*x0
-@time qp = QuadraticProgram(zeros(T, 0, nU), zeros(T, 0), [UC;-UC], [Uu; -Ul], z, F, ϵ=1e-8, smartstart=true)
+@time qp = QuadraticProgram(zeros(T, 0, nU), zeros(T, 0), [UC;-UC], [Uu; -Ul], z, F, ϵ=1e-6, smartstart=true)
 
 @time sol, val = solve!(qp)
 val = val + 1/2*x0'H*x0
 
 X = M*sol + N*x0
-X2 = M*sol2 + N*x0
+maximum(abs, X) - 0.2
+maximum([UC;-UC]*sol - [Uu; -Ul])
 1/2*sum(abs2, X) + 1/2*sum(abs2, sol)
 
 # using Plots

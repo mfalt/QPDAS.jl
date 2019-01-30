@@ -63,7 +63,7 @@ end
 
 function autoAdd(bQP)
     n = size(bQP.G,1) - bQP.m
-    M1 = bQP.G.M
+    M1 = copy(bQP.G.M)
     count = 0
     for i=(n+1):size(bQP.G,1)
         if bQP.c[i] > 0
