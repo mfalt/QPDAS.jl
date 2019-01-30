@@ -25,7 +25,7 @@ struct QuadraticProgram{T, GT<:AbstractCholeskySpecial{T}, VT<:AbstractVector{T}
     boxQP::BoxConstrainedQP{T,GT,VT}
 end
 
-function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A,2)), P=I; semidefinite=true, ϵ = sqrt(eps(T))) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
+function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A,2)), P=I; semidefinite=true, ϵ = sqrt(eps(T)), smartstart=false) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
     m = size(A,1)
     n = size(C,1)
     # Build matrix a bit more efficient
@@ -61,6 +61,9 @@ function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A
 
     # Set dual linear cost
     update!(QP)
+    if smartstart
+        autoAdd(boxQP)
+    end
     return QP
 end
 

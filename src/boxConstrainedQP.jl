@@ -61,6 +61,39 @@ function BoxConstrainedQP(G::AbstractMatrix{T}, c::VT, d::VT; semidefinite=true,
     return bQP
 end
 
+function autoAdd(bQP)
+    n = size(bQP.G,1) - bQP.m
+    M1 = bQP.G.M
+    count = 0
+    for i=(n+1):size(bQP.G,1)
+        if bQP.c[i] > 0
+            count += 1
+            M1[:,i] .= 0
+            M1[i,:] .= 0
+        end
+    end
+    println("started with: $count active")
+    empty!(bQP.G.idx)
+    for i=(n+1):size(bQP.G,1)
+        if bQP.c[i] > 0
+            M1[i,i] = 1
+            push!(bQP.G.idx, i)
+        end
+    end
+    F = cholesky(Hermitian(M1 + I*bQP.G.shift))
+
+    bQP.G.F.UL .= F.UL
+    #
+    # for i = 1:length(bQP.d)
+    #     if bQP.c[n+i] > 0
+    #         count += 1
+    #         addactive!(bQP, i)
+    #     end
+    # end
+    # println("started with: $count active")
+    return
+end
+
 ## Simple QP functionality
 """
 Solve min 1/2 pᵀGp+gₖᵀp, s.t pᵢ=0, ∀ i ∈ Wᵢ
@@ -242,7 +275,7 @@ Active set method for QP as in Numerical Optimization, Nocedal Wright
 function solve!(bQP::BoxConstrainedQP{T}) where T
     #xk = fill(zero(T), m+n) # Feasible point
     # TODO better initial guess?
-    xk = abs.(randn(size(bQP.c,1)))
+    xk = T.(abs.(randn(size(bQP.c,1))))
     Wk = bQP.G.idx
     for i in Wk
         xk[i] = zero(T) # Make sure we start feasible with respect to initial guess
@@ -250,6 +283,7 @@ function solve!(bQP::BoxConstrainedQP{T}) where T
     done = false
     while !done
         next!(bQP.status) # Update iteration count and similar
+        println(bQP.status.iters)
         DEBUG && println("working set: ", Wk)
         pk, λi, infinitedescent = findDescent(bQP, xk)
         DEBUG && println("infinitedescent: $infinitedescent")
