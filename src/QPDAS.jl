@@ -1,6 +1,6 @@
 module QPDAS
 
-global const DEBUG = true
+global const DEBUG = false
 
 export QuadraticProgram, BoxConstrainedQP, solve!, update!, ldiv2!
 
