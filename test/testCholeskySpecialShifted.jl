@@ -52,3 +52,6 @@ end
 @test cholesky(M)\b ≈ F.F\b
 @test cholesky(M)\b ≈ F\b
 @test cholesky(M).U ≈ F.U
+
+@test size(F) == size(M)
+@test size(F,1) == size(M,1)

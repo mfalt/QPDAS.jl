@@ -62,6 +62,12 @@ function BoxConstrainedQP(G::AbstractMatrix{T}, c::VT, d::VT; semidefinite=true,
     return bQP
 end
 
+# Dispatch to create factor with correct shift
+new_factor(M1, bQP::BoxConstrainedQP{T,GT}) where {T, GT<:CholeskySpecial} =
+    cholesky(Hermitian(M1))
+new_factor(M1, bQP::BoxConstrainedQP{T,GT}) where {T, GT<:CholeskySpecialShifted} =
+    cholesky(Hermitian(M1 + I*bQP.G.shift))
+
 function run_smartstart(bQP)
     n = size(bQP.G,1) - bQP.m
     M1 = copy(bQP.G.M)
@@ -81,7 +87,8 @@ function run_smartstart(bQP)
             push!(bQP.G.idx, i)
         end
     end
-    F = cholesky(Hermitian(M1 + I*bQP.G.shift))
+
+    F = new_factor(M1, bQP)
 
     bQP.G.F.UL .= F.UL
     #
