@@ -23,7 +23,7 @@ Update of row k requires O(n^2) computations
 Solving is equivalent to a normal cholesky
 
 """
-struct CholeskySpecial{T,MT} <: Factorization{T}
+struct CholeskySpecial{T,MT} <: AbstractCholeskySpecial{T,MT}
     F::Cholesky{T,MT}
     idx::Set{Int}               # Indices of deleted rows and column
     tmp::Vector{T}              # tmp storage in deleterowcol
@@ -41,7 +41,7 @@ function CholeskySpecial(F::Cholesky{T,MT}, M = F.U'F.U) where {T,MT}
 end
 
 """
-cholsolveexclude!(F::CholeskySpecial, b)
+ldiv!(F::CholeskySpecial, b)
 
 Solve Mx=b where F is Cholesky factorization if M with some rows and columns set to identity
 """
@@ -61,7 +61,7 @@ end
 
 """ `deleterowcol!(F::CholeskySpecial{T}, i)`
     Given F=U*U', update factorization corresponding to setting
-    F[i, :] = 0, F[j, i] = 0
+    F[i, :] = 0, F[:, i] = 0
     F[i,i] = 1.
 """
 function deleterowcol!(F::CholeskySpecial{T,MT}, i) where {T,MT}

@@ -1,5 +1,5 @@
 using QPDAS, Random, Test, LinearAlgebra
-import QPDAS: deleterowcol!, addrowcol!, CholeskySpecial
+import QPDAS: deleterowcol!, addrowcol!, CholeskySpecialShifted
 
 Random.seed!(3141592)
 
@@ -22,7 +22,7 @@ bs = b[idx]
 as = MS\bs
 
 # Test
-F = CholeskySpecial(cholesky(M))
+F = CholeskySpecialShifted(M)
 for j in i
     deleterowcol!(F, j)
 end
