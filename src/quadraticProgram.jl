@@ -25,7 +25,7 @@ struct QuadraticProgram{T, GT<:AbstractCholeskySpecial{T}, VT<:AbstractVector{T}
     boxQP::BoxConstrainedQP{T,GT,VT}
 end
 
-function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A,2)), P=I; semidefinite=true, ϵ = sqrt(eps(T)), smartstart=false) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
+function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A,2)), P=I; semidefinite=true, ϵ = sqrt(eps(T)), smartstart=true) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
     m = size(A,1)
     n = size(C,1)
     # Build matrix a bit more efficient
@@ -59,10 +59,11 @@ function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A
         P, PF,
         tmp3, sol, boxQP)
 
+    # TODO smartstart already at first factorization
     # Set dual linear cost
     update!(QP)
     if smartstart
-        autoAdd(boxQP)
+        run_smartstart(boxQP)
     end
     return QP
 end
@@ -94,8 +95,8 @@ end
 function factorizesolve(P::UniformScaling, A, C)
     # Send back Adjoint instread?
     PF = P
-    PiAt = copy(A')
-    PiCt = copy(C')
+    PiAt = Matrix(A')
+    PiCt = Matrix(C')
     PiAt ./= P.λ
     PiCt ./= P.λ
     return P, PiAt, PiCt

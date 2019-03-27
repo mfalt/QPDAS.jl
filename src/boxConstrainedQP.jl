@@ -14,8 +14,9 @@ end
 
 """ `pp = BoxConstrainedQP`
     Type for problem
-    min_x 1/2xᵀGx + cᵀx, s.t dᵢ ≤ xᵢ ∀ i>m
-    where `m=size(G,1)-size(d,1)`
+    min_x 1/2xᵀGx + cᵀx, s.t dᵢ ≤ xᵢ ∀ n-m<i
+    where `m=size(d,1), n=size(c,1)`.
+    Only d .== 0 is allowed at the moment.
     Stores `d,G,c,sol,μλ` and some temporary variables
     Where `sol` is the solution after calling `solve!(qp)`
     G is factorization of the input `G` where
@@ -61,7 +62,7 @@ function BoxConstrainedQP(G::AbstractMatrix{T}, c::VT, d::VT; semidefinite=true,
     return bQP
 end
 
-function autoAdd(bQP)
+function run_smartstart(bQP)
     n = size(bQP.G,1) - bQP.m
     M1 = copy(bQP.G.M)
     count = 0
@@ -72,7 +73,7 @@ function autoAdd(bQP)
             M1[i,:] .= 0
         end
     end
-    println("started with: $count active")
+    DEBUG && println("started with: $count active")
     empty!(bQP.G.idx)
     for i=(n+1):size(bQP.G,1)
         if bQP.c[i] > 0
@@ -188,14 +189,6 @@ function findInfiniteDescent(bQP::BoxConstrainedQP{T}, x) where T
     DEBUG && println("dot(μλ, g): $(dot(μλ, -g))")
     @assert dot(μλ, -g) < 0 # Make sure we got descent direction (g = -g)
 
-    # TODO figure out (not used λ)
-    # mul!(tmp, G, μλ)
-    # tmp .+= g # tmp = G*μλ + g
-    # tmpidx = sort!([bQP.G.idx...]) # Make sure λ is in predictable order
-    # for (i,j) in enumerate(tmpidx)
-    #     λ[i] = tmp[j]
-    # end
-
     return μλ, view(λ, 1:length(bQP.G.idx))
 end
 
@@ -248,8 +241,9 @@ function findDescent(bQP, xk)
 end
 
 function findDescent(bQP::BoxConstrainedQP{T,GT}, xk) where {T, GT<:CholeskySpecialShifted}
-    pk, λi, infinitedescent = solveEqualityOrInfiniteDescentQP(bQP, xk)
     DEBUG && println("Finding descent")
+    pk, λi, infinitedescent = solveEqualityOrInfiniteDescentQP(bQP, xk)
+
     DEBUG && !infinitedescent && println("Found descent")
     DEBUG &&  infinitedescent && println("Found infinite descent")
     # DEBUG && println("Finding descent")
@@ -283,7 +277,7 @@ function solve!(bQP::BoxConstrainedQP{T}) where T
     done = false
     while !done
         next!(bQP.status) # Update iteration count and similar
-        println(bQP.status.iters)
+        DEBUG && println(bQP.status.iters)
         DEBUG && println("working set: ", Wk)
         pk, λi, infinitedescent = findDescent(bQP, xk)
         DEBUG && println("infinitedescent: $infinitedescent")

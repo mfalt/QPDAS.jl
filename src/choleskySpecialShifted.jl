@@ -139,20 +139,22 @@ function ldiv2!(F::CholeskySpecialShifted{T,MT}, b::AbstractVector{T}; x0=zero(T
         xkoldold .= xkold
         xkold .= xk
 
-        # println("rnorm: $rnorm")
-        # println("xnorm: $xnorm")
-        # println("drnorm: $drnorm")
-        # println("dxnorm: $(dxnorm)")
+        # DEBUG && println("rnorm: $rnorm")
+        # DEBUG && println("xnorm: $xnorm")
+        # DEBUG && println("drnorm: $drnorm")
+        # DEBUG && println("dxnorm: $(dxnorm)")
         # println("ddxnorm: $(ddxnorm)")
         # println("dxnorm/xnorm: $(dxnorm/xnorm)")
         # println("ddxnorm/xnorm: $(ddxnorm/xnorm)")
 
         # This should re robust
-        if rnorm < 1e-11 && drnorm < 1e-11 # Break if we found Mx=b solution
+        # TODO 1e-11 for robustness?
+        if rnorm < 1e-10 && drnorm < 1e-10 # Break if we found Mx=b solution
+
             done = true
             projection = false
             if nleft < 1
-                DEBUG && println("$projection i: $i")
+                DEBUG && println("Projection: $projection i: $i")
                 break
             end
             nleft -= 1
@@ -167,7 +169,7 @@ function ldiv2!(F::CholeskySpecialShifted{T,MT}, b::AbstractVector{T}; x0=zero(T
                 done = true
                 projection = true
                 if nleft < 1
-                    DEBUG && println("$projection i: $i")
+                    DEBUG && println("Projection: $projection i: $i")
                     break
                 end
                 nleft -= 1
@@ -185,15 +187,15 @@ function ldiv2!(F::CholeskySpecialShifted{T,MT}, b::AbstractVector{T}; x0=zero(T
                 error("ldiv! did not converge to a solution, case 1, rnorm: $rnorm, dxnorm: $(dxnorm)")
             end
             projection = false
-            DEBUG && println("$projection after")
+            DEBUG && println("Projection: $projection after")
         elseif ddxnorm/xnorm < 1e-5 && dxnorm/xnorm > 1e-3
             projection = true
-            DEBUG && println("$projection after")
+            DEBUG && println("Projection: $projection after")
         else
             error("ldiv! did not converge to a solution, case 2, rnorm: $rnorm, dxnorm: $(dxnorm), dxnorm/xnorm: $(dxnorm/xnorm), ddxnorm/xnorm: $(ddxnorm/xnorm)")
         end
     end
-    #println("$projection end")
+    DEBUG && println("Projection: $projection at end test")
     if projection
         b .= rk.*F.shift
     else

@@ -69,6 +69,3 @@ X = M*sol + N*x0
 maximum(abs, X) - 0.2
 maximum([UC;-UC]*sol - [Uu; -Ul])
 1/2*sum(abs2, X) + 1/2*sum(abs2, sol)
-
-# using Plots
-# plot(reshape(X, 4, :)')
