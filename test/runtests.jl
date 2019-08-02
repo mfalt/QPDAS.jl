@@ -17,6 +17,10 @@ end
     include("testBoxQP.jl")
 end
 
+@testset "testQPNoScaling" begin
+    include("testQPNoScaling.jl")
+end
+
 @testset "testQP" begin
     include("testQP.jl")
 end

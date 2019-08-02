@@ -4,6 +4,12 @@
     `min_x 1/2xᵀPx + zᵀx, s.t Ax=b, Cx≤d`
     where `P` is positive definite.
 
+    Keyword arguments:
+    `semidefinite=true` Indicates that the dual might be semidefinite, which enables iterative refinement
+    `ϵ = sqrt(eps(T))`  Relaxation used in iterative refinement (H+ϵI)
+    `smartstart=true`   Enables a smart guess on initial active set
+    `scaling=true`      Scales the constraints to have unit row norm
+
     Stores: `A,b,C,d,z,P,PF,sol,boxQP` and some temporary variables.
     `sol` is the solution after calling `solve!(qp)`,
     `PF` is a factorization of `P`,
@@ -22,14 +28,34 @@ struct QuadraticProgram{T, GT<:AbstractCholeskySpecial{T}, VT<:AbstractVector{T}
     PF::PFT
     tmp3::VT
     sol::VT
+    scaling::Bool
+    scaleA::VT
+    scaleC::VT
     boxQP::BoxConstrainedQP{T,GT,VT}
 end
 
-function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A,2)), P=I; semidefinite=true, ϵ = sqrt(eps(T)), smartstart=true) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
+function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A,2)), P=I; semidefinite=true, ϵ = sqrt(eps(T)), smartstart=true, scaling=true) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
     m = size(A,1)
     n = size(C,1)
     # Build matrix a bit more efficient
     #GQ = [A*P⁻¹*A' A*P⁻¹*C'; C*P⁻¹*A' C*P⁻¹*C']
+    A = copy(A)
+    C = copy(C)
+    b = copy(b)
+    d = copy(d)
+    if scaling
+        scaleA = vec(sqrt.(sum(abs2, A, dims=2)))
+        scaleC = vec(sqrt.(sum(abs2, C, dims=2)))
+        A .= A ./ scaleA
+        C .= C ./ scaleC
+        b .= b ./ scaleA
+        d .= d ./ scaleC
+    else
+        # Empty vectors, make sure not to use them
+        scaleA = VT(undef,0)
+        scaleC = VT(undef,0)
+    end
+
     GQ = similar(A, m+n, m+n)
     GQ11 = view(GQ, 1:m,1:m)
     GQ12 = view(GQ, 1:m, (m+1):(m+n))
@@ -57,7 +83,7 @@ function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A
     QP = QuadraticProgram{T,typeof(boxQP.G), VT, MT, typeof(P), typeof(PF)}(
         A, C, b, d, z,
         P, PF,
-        tmp3, sol, boxQP)
+        tmp3, sol, scaling, scaleA, scaleC, boxQP)
 
     # TODO smartstart already at first factorization
     # Set dual linear cost
@@ -132,9 +158,26 @@ function solve!(QP::QuadraticProgram)
     return sol, dot(tmp,sol)/2 + dot(sol, QP.z)
 end
 
-function update!(QP::QuadraticProgram; b=QP.b, d=QP.d, z=QP.z)
-    # TODO Up
-    # We only need to update c
+function update!(QP::QuadraticProgram; b=nothing, d=nothing, z=QP.z)
+    # TODO ?
+
+    # If updating b or z, do scaling before saving
+    if !isnothing(b)
+        if QP.scaling
+            QP.b .= b ./ QP.scaleA
+        else
+            QP.b .= b
+        end
+    end
+    if !isnothing(b)
+        if QP.scaling
+            QP.d .= d ./ QP.scaleC
+        else
+            QP.d .= d
+        end
+    end
+
+    # We need to update c
     m = size(QP.A,1)
     n = size(QP.C,1)
     c1 = view(QP.boxQP.c, 1:m)
@@ -143,12 +186,11 @@ function update!(QP::QuadraticProgram; b=QP.b, d=QP.d, z=QP.z)
     # TODO efficiency
     Piz = QP.PF\z
     mul!(c1, QP.A, Piz)
-    c1 .= c1 .+ b # c1 = A*z + b
+    c1 .= c1 .+ QP.b # c1 = A*z + b
     mul!(c2, QP.C, Piz)
-    c2 .= c2 .+ d # c2 = C*z + b
+    c2 .= c2 .+ QP.d # c2 = C*z + d
 
     QP.z .= z
-    QP.b .= b
-    QP.d .= d
+
     return
 end

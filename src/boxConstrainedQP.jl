@@ -284,10 +284,12 @@ function solve!(bQP::BoxConstrainedQP{T}) where T
     done = false
     while !done
         next!(bQP.status) # Update iteration count and similar
-        DEBUG && println(bQP.status.iters)
+        #println(bQP.status.iters)
         DEBUG && println("working set: ", Wk)
         pk, λi, infinitedescent = findDescent(bQP, xk)
-        DEBUG && println("infinitedescent: $infinitedescent")
+        #println("infinitedescent: $infinitedescent")
+        #println("norm xk: $(norm(xk)) ")
+        #println("norm pk: $(norm(pk)) ")
         DEBUG && println("xk: ", xk)
         DEBUG && println("pk: ", pk)
         #println("λi: ", λi)

@@ -192,6 +192,9 @@ function ldiv2!(F::CholeskySpecialShifted{T,MT}, b::AbstractVector{T}; x0=zero(T
             projection = true
             DEBUG && println("Projection: $projection after")
         else
+            # Try to catch case where it doesnt really matter
+            #@warn "Testing direction we are not sure about"
+            #projection = true
             error("ldiv! did not converge to a solution, case 2, rnorm: $rnorm, dxnorm: $(dxnorm), dxnorm/xnorm: $(dxnorm/xnorm), ddxnorm/xnorm: $(ddxnorm/xnorm)")
         end
     end
