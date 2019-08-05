@@ -162,14 +162,14 @@ function update!(QP::QuadraticProgram; b=nothing, d=nothing, z=QP.z)
     # TODO ?
 
     # If updating b or z, do scaling before saving
-    if !isnothing(b)
+    if  b !== nothing
         if QP.scaling
             QP.b .= b ./ QP.scaleA
         else
             QP.b .= b
         end
     end
-    if !isnothing(b)
+    if d !== nothing
         if QP.scaling
             QP.d .= d ./ QP.scaleC
         else
