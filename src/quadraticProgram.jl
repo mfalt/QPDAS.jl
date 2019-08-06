@@ -72,11 +72,13 @@ function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A
     GQ[(m+1):(m+n), 1:m] .= GQ12'
 
     # Dual linear cost
-    dualc = similar(b, m+n)     # Set in update!
+    dualc = similar(b, m+n)
+    setdualc!(dualc, A, b, C, d, z, PF)   # Set dualc
     duald = fill(zero(T), n)       # Always zero
 
     # Dual problem is simple Semidefinite Quadratic, with 0≤xᵢ ∀i>m
-    boxQP = BoxConstrainedQP(Hermitian(GQ), dualc, duald; semidefinite=semidefinite, ϵ = ϵ)
+    # TODO Copy only needed to pass ishermitian assertion
+    boxQP = BoxConstrainedQP(Hermitian(GQ)[:,:], dualc, duald; semidefinite=semidefinite, ϵ = ϵ, smartstart = smartstart)
 
     sol = similar(z)
     tmp3 = similar(z)
@@ -85,12 +87,6 @@ function QuadraticProgram(A::MT, b::VT, C::MT, d::VT, z::VT=fill(zero(T), size(A
         P, PF,
         tmp3, sol, scaling, scaleA, scaleC, boxQP)
 
-    # TODO smartstart already at first factorization
-    # Set dual linear cost
-    update!(QP)
-    if smartstart
-        run_smartstart(boxQP)
-    end
     return QP
 end
 
@@ -158,6 +154,22 @@ function solve!(QP::QuadraticProgram)
     return sol, dot(tmp,sol)/2 + dot(sol, QP.z)
 end
 
+function setdualc!(c, A, b, C, d, z, PF)
+    # We need to update c
+    m = size(A,1)
+    n = size(C,1)
+    c1 = view(c, 1:m)
+    c2 = view(c, (m+1):(m+n))
+
+    # TODO efficiency
+    Piz = PF\z
+    mul!(c1, A, Piz)
+    c1 .= c1 .+ b # c1 = A*z + b
+    mul!(c2, C, Piz)
+    c2 .= c2 .+ d # c2 = C*z + d
+    return
+end
+
 function update!(QP::QuadraticProgram; b=nothing, d=nothing, z=QP.z)
     # TODO ?
 
@@ -178,17 +190,7 @@ function update!(QP::QuadraticProgram; b=nothing, d=nothing, z=QP.z)
     end
 
     # We need to update c
-    m = size(QP.A,1)
-    n = size(QP.C,1)
-    c1 = view(QP.boxQP.c, 1:m)
-    c2 = view(QP.boxQP.c, (m+1):(m+n))
-
-    # TODO efficiency
-    Piz = QP.PF\z
-    mul!(c1, QP.A, Piz)
-    c1 .= c1 .+ QP.b # c1 = A*z + b
-    mul!(c2, QP.C, Piz)
-    c2 .= c2 .+ QP.d # c2 = C*z + d
+    setdualc!(QP.boxQP.c, QP.A, QP.b, QP.C, QP.d, z, QP.PF)
 
     QP.z .= z
 
