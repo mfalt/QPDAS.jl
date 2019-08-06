@@ -38,13 +38,13 @@ struct CholeskySpecialShifted{T,MT} <: AbstractCholeskySpecial{T,MT}
     shift::T
 end
 
-# TODO We should try to make some deafult choise here
-function CholeskySpecialShifted(F::Cholesky{T,MT}, M, shift) where {T,MT}
+# TODO We should try to make some deafult choice here
+function CholeskySpecialShifted(F::Cholesky{T,MT}, M, shift, idx=Set{Int}()) where {T,MT}
     if F.uplo != 'U'
         error("Only implemented for U type")
     end
     n = size(F,1)
-    CholeskySpecialShifted{T,MT}(F, Set{Int}(),                 # F and idx
+    CholeskySpecialShifted{T,MT}(F, idx,                 # F and idx
         fill(zero(T), n), fill(zero(T), n), fill(zero(T), n),   # tmp, tmp2, tmp3
         fill(zero(T), n), fill(zero(T), n),                     # tmp4, tmp5
         M, shift)                                               # M (unshifted), shift

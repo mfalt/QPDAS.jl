@@ -31,11 +31,11 @@ struct CholeskySpecial{T,MT} <: AbstractCholeskySpecial{T,MT}
     M::MT
 end
 
-function CholeskySpecial(F::Cholesky{T,MT}, M = F.U'F.U) where {T,MT}
+function CholeskySpecial(F::Cholesky{T,MT}, M = F.U'F.U, idx=Set{Int}()) where {T,MT}
     if F.uplo != 'U'
         error("Only implemented for U type")
     end
-    CholeskySpecial{T,MT}(F, Set{Int}(),                    # F and idx
+    CholeskySpecial{T,MT}(F, idx,                    # F and idx
         fill(zero(T), size(F,1)), fill(zero(T), size(F,1)), # tmp, tmp2
         M)                                                  # M
 end

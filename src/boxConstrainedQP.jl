@@ -36,19 +36,45 @@ struct BoxConstrainedQP{T, GT<:AbstractCholeskySpecial{T}, VT<:AbstractVector{T}
 end
 
 
-function BoxConstrainedQP(G::AbstractMatrix{T}, c::VT, d::VT; semidefinite=true, ϵ = sqrt(eps(T))) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
+function BoxConstrainedQP(G::AbstractMatrix{T}, c::VT, d::VT; semidefinite=true,
+                          ϵ = sqrt(eps(T)), smartstart = false) where {T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
     m = size(d,1)
     n = size(G,1) - m
 
     @assert issymmetric(G)
     @assert all(isequal(0), d) # For now we only allow positive constraints
 
-    GF = if semidefinite
-            F = cholesky(Hermitian(G + I*ϵ))
-            CholeskySpecialShifted(F, G, ϵ)
+    # If smartstart find initial active set and reduce matrix accordingly
+    # Get reduced matrix and initial active set
+    Greduced, idx = if smartstart
+            idx = Set{Int}()
+            Gr = copy(G)
+            count = 0
+            for i=(n+1):size(G,1)
+                if c[i] > 0
+                    count += 1
+                    Gr[:,i] .= 0
+                    Gr[i,:] .= 0
+                end
+            end
+            DEBUG && println("started with: $count active")
+            for i=(n+1):size(G,1)
+                if c[i] > 0
+                    Gr[i,i] = 1
+                    push!(idx, i)
+                end
+            end
+            Gr, idx
         else
-            F = cholesky(Hermitian(G))
-            CholeskySpecial(F, G)
+            G, Set{Int}()
+        end
+
+    GF = if semidefinite
+            F = cholesky(Hermitian(Greduced + ϵ*I))
+            CholeskySpecialShifted(F, G, ϵ, idx)
+        else
+            F = cholesky(Hermitian(Greduced))
+            CholeskySpecial(F, G, idx)
         end
 
     bQP = BoxConstrainedQP{T,typeof(GF),VT}(
